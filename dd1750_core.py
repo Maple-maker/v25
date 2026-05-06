@@ -1104,6 +1104,21 @@ def generate_dd1750_overlay(
         total_center_x = (X_TOTAL_L + X_TOTAL_R) / 2
         can.drawCentredString(total_center_x, y_line1, str(item.qty))
     
+    # === "NOTHING FOLLOWS" MARKER ===
+    # Drawn on the last page, on the row immediately after the last item.
+    # If the page is completely full (18 items), we skip it — the user can
+    # add a final blank page manually if needed.
+    if page_num == total_pages and len(items) < ROWS_PER_PAGE:
+        marker_row_top = Y_TABLE_TOP - (len(items) * ROW_H)
+        marker_y = marker_row_top - 10.0
+        marker_center_x = (X_CONTENT_L + X_CONTENT_R) / 2
+        can.setFont("Helvetica-Bold", 8)
+        can.drawCentredString(
+            marker_center_x,
+            marker_y,
+            "------------------- NOTHING FOLLOWS -------------------"
+        )
+    
     can.save()
     packet.seek(0)
     return packet
