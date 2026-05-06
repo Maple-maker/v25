@@ -223,46 +223,55 @@ def find_column_indices(header: List[str]) -> Dict[str, Optional[int]]:
 
 def extract_nsn_from_material(material_text: str) -> str:
     """
-    Extract 9-digit NIIN from material/part number field.
+    Extract 9-character NIIN from material/part number field.
     
     Handles various formats found in GCSS-Army BOMs:
     - Direct 9-digit NIIN: 002643796
     - With line breaks: 002643796\nC_19207 ~ 11655778-5
     - Full NSN format: 6545-00-922-1200
     - Material number with NIIN: C_89875 ~ 6545-00-922-1200
+    - Alphanumeric "C-prefix" NIIN: 01C079749 (digits + 1 letter + digits = 9 chars)
+    - NIIN on second line if first is a part number
     
     Args:
         material_text: Text from material column
         
     Returns:
-        9-digit NIIN string or empty string if not found
+        9-character NIIN string or empty string if not found
     """
     if not material_text:
         return ""
     
     text = str(material_text).strip()
+    lines = [ln.strip() for ln in text.split('\n') if ln.strip()]
     
-    # First, look for 9-digit number at the start of a line or the text
-    # This handles the common format where NIIN is on first line
-    lines = text.split('\n')
+    # Pattern A: 9-digit NIIN at start of any line (most common GCSS format)
     for line in lines:
-        line = line.strip()
-        # Check if line starts with 9 digits
-        match = re.match(r'^(\d{9})\b', line)
+        match = re.match(r'^(\d{9})(?:\b|$)', line)
         if match:
             return match.group(1)
     
-    # Look for any 9-digit number in the text
-    match = re.search(r'\b(\d{9})\b', text)
-    if match:
-        return match.group(1)
+    # Pattern B: Alphanumeric 9-char NIIN at start of any line
+    # Format: digits + letter(s) + digits = exactly 9 chars (e.g., 01C079749)
+    # Must have at least 2 digits at the start to avoid matching part numbers
+    for line in lines:
+        match = re.match(r'^(\d{2}[A-Z]\d{6}|\d{2}[A-Z]{2}\d{5}|\d{3}[A-Z]\d{5}|\d{2}[A-Z]\d{2}[A-Z]\d{3})(?:\b|$)', line)
+        if match:
+            return match.group(1)
     
-    # Look for full NSN format (XXXX-XX-XXX-XXXX) and extract NIIN portion
+    # Pattern C: Full NSN format anywhere (XXXX-XX-XXX-XXXX) - extract NIIN portion
     nsn_match = re.search(r'\b(\d{4})-(\d{2})-(\d{3})-(\d{4})\b', text)
     if nsn_match:
         # NIIN is the last 9 digits: FSC-NIIN format
-        # Return digits 3-4 (2 chars) + digits 5-7 (3 chars) + digits 8-11 (4 chars)
         return nsn_match.group(2) + nsn_match.group(3) + nsn_match.group(4)
+    
+    # Pattern D: Any 9-digit number in the text (last-ditch fallback)
+    # Avoid matching obvious part numbers (preceded by letters/dashes)
+    for line in lines:
+        # Skip lines that look like part numbers (contain : ~ - prominently)
+        match = re.search(r'(?:^|[\s])(\d{9})(?:\b|$)', line)
+        if match:
+            return match.group(1)
     
     return ""
 
@@ -366,29 +375,42 @@ def extract_items_gcss_standard(tables: List[List[List[str]]]) -> List[BomItem]:
             if not any(cell for cell in row if cell):
                 continue
             
-            # PRIMARY CHECK: CIIC column must have a letter
-            # If CIIC has a letter (U, M, J, etc.), this is a valid item row
-            # If CIIC is empty or not a letter, skip the row
-            if indices['ciic'] is not None:
-                ciic_cell = row[indices['ciic']] if indices['ciic'] < len(row) else None
+            # PRIMARY CHECK: Use LV column to identify valid items
+            # LV='B' = component (the items we want)
+            # LV='A' = category header (skip)
+            # LV empty + has Material/Description = also valid (some EPP-style rows)
+            #
+            # CIIC column is informational only - it can be a letter (U, M, J, Y)
+            # OR a digit (7, 9) for sensitive items. Both are valid.
+            lv_value = ""
+            if indices['lv'] is not None and indices['lv'] < len(row):
+                lv_cell = row[indices['lv']]
+                lv_value = str(lv_cell).strip().upper() if lv_cell else ""
+            
+            ciic_value = ""
+            if indices['ciic'] is not None and indices['ciic'] < len(row):
+                ciic_cell = row[indices['ciic']]
                 ciic_value = str(ciic_cell).strip().upper() if ciic_cell else ""
-                
-                # Must have exactly one letter in CIIC to be a valid item
-                if not ciic_value or not ciic_value.isalpha():
+            
+            # Skip "A" level items (category headers like COEI/BII)
+            if lv_value == 'A':
+                continue
+            
+            # If neither LV nor CIIC has content, this is probably a separator/blank row
+            # Real item rows have at least one of: LV='B', non-empty CIIC, or both
+            if not lv_value and not ciic_value:
+                # Allow rows with no LV and no CIIC ONLY if they have material AND description
+                # (some EPP-format rows have empty LV and CIIC)
+                has_material_data = (indices['material'] is not None 
+                                     and indices['material'] < len(row) 
+                                     and row[indices['material']]
+                                     and str(row[indices['material']]).strip())
+                if not has_material_data:
                     continue
-            else:
-                # Fallback to LV logic if CIIC column not found
-                if indices['lv'] is not None:
-                    lv_cell = row[indices['lv']] if indices['lv'] < len(row) else None
-                    lv_value = str(lv_cell).strip().upper() if lv_cell else ""
-                    
-                    # Skip "A" level items (category headers)
-                    if lv_value == 'A':
-                        continue
-                    
-                    # If LV has a value and it's not "B", skip
-                    if lv_value and lv_value != 'B':
-                        continue
+            
+            # If LV is set, it must be 'B' (or some other component code, NOT 'A')
+            if lv_value and lv_value not in ('B', 'C', 'D', 'E'):
+                continue
             
             # Extract description - ALWAYS use the FIRST LINE
             # The first line contains the clean nomenclature (e.g., "CHAIN ASSEMBLY,SINGLE LEG")
@@ -415,13 +437,20 @@ def extract_items_gcss_standard(tables: List[List[List[str]]]) -> List[BomItem]:
             skip_patterns = [
                 'COMPONENT OF END ITEM', 'BASIC ISSUE ITEMS', 
                 'COEI-', 'BII-', 'OPERATIONAL SUPPORT',
-                'WH12B0', 'WH12', 'IMAGE',  # Unit identifiers that appear in headers
             ]
             if any(pat in description.upper() for pat in skip_patterns):
                 continue
             
-            # Also skip if description looks like an end item number (just digits/letters)
-            if re.match(r'^[\dA-Z\-]+$', description.upper()) and len(description) < 20:
+            # Skip if description looks like an end item ID code, NOT a regular nomenclature.
+            # An ID code looks like "WH12B0" or "T59652-014120143" - it has digits OR a dash.
+            # Pure alphabetical descriptions like "ANTENNA", "HANDSET" are valid item names!
+            desc_upper = description.upper()
+            looks_like_id = (
+                len(description) < 20
+                and re.match(r'^[\dA-Z\-]+$', desc_upper)  # Only digits/letters/dashes (no spaces, no commas)
+                and (any(c.isdigit() for c in desc_upper) or '-' in desc_upper)  # Has digits OR dash
+            )
+            if looks_like_id:
                 continue
             
             # Extract NSN from material column
@@ -518,9 +547,22 @@ def extract_items_epp_format(tables: List[List[List[str]]], page_text: str) -> L
             if not description:
                 continue
             
-            # Skip obvious header/category rows
-            if description.upper() in ('COMPONENT OF END ITEM', 'BASIC ISSUE ITEMS', 
-                                        'OPERATIONAL SUPPORT', 'COEI', 'BII'):
+            # Skip obvious header/category rows (substring match, not exact)
+            skip_patterns = [
+                'COMPONENT OF END ITEM', 'BASIC ISSUE ITEMS', 
+                'OPERATIONAL SUPPORT', 'COEI-', 'BII-',
+            ]
+            if any(pat in description.upper() for pat in skip_patterns):
+                continue
+            
+            # Skip ID-like descriptions (e.g., "WH12B0", "T59652-014120143")
+            desc_upper = description.upper()
+            looks_like_id = (
+                len(description) < 20
+                and re.match(r'^[\dA-Z\-]+$', desc_upper)
+                and (any(c.isdigit() for c in desc_upper) or '-' in desc_upper)
+            )
+            if looks_like_id:
                 continue
             
             # Extract NSN from material column
@@ -622,22 +664,18 @@ def extract_items_da2062(tables: List[List[List[str]]], page_text: str) -> List[
             if not any(cell for cell in row if cell and str(cell).strip()):
                 continue
             
-            # Extract stock number
+            # Extract stock number - parse to 9-digit NIIN format for consistency
             nsn = ""
             if nsn_col < len(row) and row[nsn_col]:
-                # Look for NSN pattern in the cell
-                nsn_text = str(row[nsn_col])
-                nsn_match = re.search(r'(\d{4}[-\s]?\d{2}[-\s]?\d{3}[-\s]?\d{4})', nsn_text)
-                if nsn_match:
-                    nsn = nsn_match.group(1).replace('-', '').replace(' ', '')
+                nsn = extract_nsn_from_material(str(row[nsn_col]))
             
             # Also check adjacent cells for NSN if not found
             if not nsn:
                 for check_col in range(max(0, nsn_col-1), min(len(row), nsn_col+2)):
                     if row[check_col]:
-                        nsn_match = re.search(r'(\d{4}[-\s]?\d{2}[-\s]?\d{3}[-\s]?\d{4})', str(row[check_col]))
-                        if nsn_match:
-                            nsn = nsn_match.group(1).replace('-', '').replace(' ', '')
+                        candidate = extract_nsn_from_material(str(row[check_col]))
+                        if candidate:
+                            nsn = candidate
                             break
             
             # Extract description
