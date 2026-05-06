@@ -772,15 +772,22 @@ def extract_items_from_form_fields(pdf_path: str) -> List[BomItem]:
     """
     Extract BOM items from PDF form fields when text extraction fails.
     
-    Some GCSS-Army BOMs are "form-only" PDFs where the content is stored
-    as images with form field overlays. This function extracts item info
-    from the form field names and tooltips.
+    Some GCSS-Army BOMs are "form-only" PDFs where the page text stream is
+    empty and all content is stored as form field annotations. Form fields
+    appear in document order following this pattern for each item:
+    
+        MATERIAL field   - tooltip starts with 9-char NIIN, e.g. "011661384 1766590W:C_75Q65"
+        WTY field        - tooltip starts with "WTY_", contains the description
+        OH Qty field     - holds the on-hand quantity value
+    
+    Category headers (COEI-XXXXXXXXX, BII-XXXXXXXXX) follow a different
+    pattern with no NIIN and should be skipped.
     
     Args:
         pdf_path: Path to the PDF file
         
     Returns:
-        List of BomItem objects
+        List of BomItem objects with NSN populated where available
     """
     items = []
     
@@ -791,90 +798,135 @@ def extract_items_from_form_fields(pdf_path: str) -> List[BomItem]:
         if not fields:
             return items
         
-        # Collect OH Qty values by index
-        oh_qty_map = {}
-        for name, field in fields.items():
-            name_lower = name.lower()
-            tooltip = str(field.get('/TU', '')).lower()
-            
-            if 'oh qty' in name_lower or 'oh_qty' in tooltip or 'oh qty' in tooltip:
-                value = field.get('/V', '')
-                if value is not None and str(value).strip().isdigit():
-                    # Extract index from name (e.g., "OH Qty1_5" -> 5, "OH Qty1" -> 1)
-                    match = re.search(r'(\d+)$', name)
-                    if match:
-                        idx = int(match.group(1))
-                        # Normalize: "OH Qty1" -> index 1, "OH Qty1_2" -> index 2
-                        if '_' not in name and idx == 1:
-                            idx = 1
-                        oh_qty_map[idx] = int(value)
+        # Walk fields in document order, tracking state as we go.
+        # Python preserves dict insertion order (3.7+), and PdfReader.get_fields()
+        # returns fields in their PDF document order.
+        pending_nsn = ""
+        pending_material_text = ""
+        last_item_idx = -1  # index into `items` of the most recently created item
         
-        # Collect item descriptions from tooltips
-        # Look for WTY_ prefix or item-like patterns
-        item_descriptions = []
+        # Patterns for recognizing material field tooltips/names
+        # GCSS material fields look like: "011661384 1766590W:C 75Q65 -"
+        # or with alphanumeric NIIN: "01C079749 ..."
+        nsn_at_start_re = re.compile(
+            r'^(\d{9}|\d{2}[A-Z]\d{6}|\d{2}[A-Z]{2}\d{5}|\d{3}[A-Z]\d{5})\b'
+        )
+        # Pattern for skipping category-header field tooltips
+        is_category = lambda t: bool(re.search(r'\b(COEI|BII)-\d', t, re.IGNORECASE))
+        
         for name, field in fields.items():
-            tooltip = str(field.get('/TU', ''))
-            
-            # Skip category headers and metadata (use word boundaries or exact matches)
-            skip_exact = ['FROM', 'TO', 'SLOC', 'EA', 'Image_Row']
-            skip_contains = [
-                'COEI-', 'BII-', 'COMPONENT OF END ITEM', 'BASIC ISSUE',
-                'SIGNATURE', 'DATE', 'GRADE', 'ARC_', 'CIIC_', 'N_', 'Row_',
-                'PUB NUM', 'PUB/BOM'
-            ]
-            
-            # Check exact matches
+            tooltip = str(field.get('/TU', '') or '')
+            value = str(field.get('/V', '') or '')
             tooltip_stripped = tooltip.strip()
-            if tooltip_stripped.upper() in [p.upper() for p in skip_exact]:
+            name_stripped = name.strip()
+            
+            # ---- Skip metadata/non-item fields ----
+            if not tooltip_stripped and not name_stripped:
                 continue
             
-            # Check contains patterns  
-            if any(pat.upper() in tooltip.upper() for pat in skip_contains):
+            # Top-level metadata fields - skip
+            metadata_names = {
+                'SLOC', 'TO', 'FROM', 'DATE', 'GRADE', 'SIGNATURE',
+                'undefined', 'PUB NUM', 'PUB/BOM', 'EA',
+            }
+            if name_stripped in metadata_names or tooltip_stripped in metadata_names:
                 continue
             
-            # Look for item description patterns
-            if tooltip.startswith('WTY_') or tooltip.startswith('9_'):
-                # Extract description from tooltip
-                desc = tooltip.replace('WTY_', '').replace('9_', '')
+            # Category header fields (COEI-XXXX, BII-XXXX) - skip and reset state
+            # so the next material field starts fresh
+            if is_category(tooltip_stripped) or is_category(name_stripped):
+                pending_nsn = ""
+                pending_material_text = ""
+                continue
+            
+            # ---- Detect MATERIAL fields ----
+            # Tooltip or name starts with a 9-char NIIN pattern
+            mat_match = nsn_at_start_re.match(tooltip_stripped) or nsn_at_start_re.match(name_stripped)
+            if mat_match:
+                pending_nsn = mat_match.group(1)
+                pending_material_text = tooltip_stripped or name_stripped
+                continue
+            
+            # Material fields without a NIIN (just part numbers) — record but no NSN
+            # Example: "T25050T:C_0WFM3" or "13632952-CBLE:C_18876"
+            # These look like part-number-with-cage format
+            looks_like_part_only = (
+                re.match(r'^[A-Z0-9][\w\-]+\s*:\s*C[_ ]\w+', tooltip_stripped) or
+                re.match(r'^[A-Z0-9][\w\-]+\s*:\s*C[_ ]\w+', name_stripped)
+            )
+            if looks_like_part_only:
+                pending_nsn = ""
+                pending_material_text = tooltip_stripped or name_stripped
+                continue
+            
+            # ---- Detect WTY/DESC fields (the description field) ----
+            # Three known prefix patterns in GCSS-Army form-only BOMs:
+            #   "WTY_..."         - normal pattern
+            #   "9_..."           - alternate pattern
+            #   "Description ..." - condensed pattern (some pages)
+            desc_prefix = None
+            if tooltip_stripped.startswith('WTY_'):
+                desc_prefix = 'WTY_'
+            elif tooltip_stripped.startswith('9_'):
+                desc_prefix = '9_'
+            elif tooltip_stripped.startswith('Description '):
+                desc_prefix = 'Description '
+            
+            if desc_prefix:
+                desc = tooltip_stripped[len(desc_prefix):].strip()
                 
-                # Clean up the description - often has duplicate parts
-                # Format is often "SHORT,NAME FULL DESCRIPTION"
-                desc = desc.strip()
-                
-                # Take the first meaningful part (before repetition)
+                # The tooltip often duplicates the nomenclature
+                # Format: "SHORT,NAME FULL DESCRIPTION..." where SHORT NAME repeats
+                # Try to detect repetition and keep just the first instance
                 parts = desc.split()
                 if len(parts) > 1:
-                    # Try to find where the description repeats
-                    first_word = parts[0].replace(',', '')
+                    first_word = parts[0].replace(',', '').upper()
                     for i, part in enumerate(parts[1:], 1):
-                        if part.replace(',', '').upper() == first_word.upper():
+                        if part.replace(',', '').upper() == first_word:
                             desc = ' '.join(parts[:i])
                             break
                 
-                if desc and len(desc) >= 3:
-                    # Clean up
-                    desc = re.sub(r'\s+', ' ', desc).strip()
-                    desc = re.sub(r',+', ',', desc)
-                    item_descriptions.append(desc)
-        
-        # Create BomItem objects
-        for i, desc in enumerate(item_descriptions, 1):
-            # Get OH Qty if available
-            oh_qty = oh_qty_map.get(i, -1)
+                # Clean up
+                desc = re.sub(r'\s+', ' ', desc).strip()
+                desc = re.sub(r',+', ',', desc)
+                
+                if not desc or len(desc) < 3:
+                    continue
+                
+                # Skip if it still looks like a category header
+                if is_category(desc):
+                    continue
+                
+                # Create the item, pairing it with the most recent NSN
+                items.append(BomItem(
+                    line_no=len(items) + 1,
+                    description=desc[:100],
+                    nsn=pending_nsn,
+                    qty=1,  # Default; updated when we see the OH Qty field
+                    unit_of_issue="EA",
+                    material_number=pending_material_text,
+                ))
+                last_item_idx = len(items) - 1
+                
+                # Reset NIIN so it doesn't accidentally bind to the next item
+                pending_nsn = ""
+                pending_material_text = ""
+                continue
             
-            # Use OH Qty as quantity if > 0, otherwise default to 1
-            qty = oh_qty if oh_qty > 0 else 1
-            
-            items.append(BomItem(
-                line_no=i,
-                description=desc[:100],
-                nsn="",  # NSN not available in form fields
-                qty=qty,
-                unit_of_issue="EA",
-                oh_qty=oh_qty
-            ))
+            # ---- Detect OH Qty fields and attach to most recent item ----
+            is_oh_qty = (
+                'OH Qty' in name or 'OH Qty' in tooltip or
+                'oh_qty' in name.lower() or 'oh qty' in tooltip.lower()
+            )
+            if is_oh_qty and last_item_idx >= 0:
+                if value and str(value).strip().isdigit():
+                    qty_val = int(str(value).strip())
+                    items[last_item_idx].oh_qty = qty_val
+                    if qty_val > 0:
+                        items[last_item_idx].qty = qty_val
+                continue
         
-    except Exception as e:
+    except Exception:
         # Silently fail - caller will fall back to other methods
         pass
     
@@ -951,6 +1003,19 @@ def extract_items_from_pdf(pdf_path: str, start_page: int = 0) -> ExtractionResu
                     all_items = form_items
                     result.format_detected = BomFormat.GCSS_ARMY_STANDARD
                     result.pages_processed = len(pdf.pages)
+                    
+                    # Form-only PDFs sometimes have pages where item data was flattened
+                    # to image pixels and is no longer extractable. Warn the user so
+                    # they can double-check the result against the original.
+                    items_with_nsn = sum(1 for item in form_items if item.nsn)
+                    items_without_nsn = len(form_items) - items_with_nsn
+                    result.warnings.append(
+                        f"This PDF stores its data as form fields rather than text. "
+                        f"Extracted {len(form_items)} items ({items_with_nsn} with NSN). "
+                        f"Some pages of this BOM type may have items rendered as images "
+                        f"that cannot be extracted automatically — please verify against "
+                        f"the original PDF and add any missing items in the review screen."
+                    )
             
             # Renumber items
             for i, item in enumerate(all_items):
