@@ -1,0 +1,941 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DD1750 Converter - BOM to Packing List</title>
+    <style>
+        :root {
+            --primary: #1a365d;
+            --primary-light: #2c5282;
+            --accent: #3182ce;
+            --success: #38a169;
+            --warning: #d69e2e;
+            --danger: #e53e3e;
+            --bg: #f7fafc;
+            --card: #ffffff;
+            --border: #e2e8f0;
+            --text: #2d3748;
+            --text-light: #718096;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: var(--primary);
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        
+        .header p {
+            font-size: 0.875rem;
+            opacity: 0.9;
+            margin-top: 0.25rem;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        .card {
+            background: var(--card);
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .card-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--primary);
+        }
+        
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: var(--accent);
+            background: #ebf8ff;
+        }
+        
+        .upload-zone input[type="file"] {
+            display: none;
+        }
+        
+        .upload-icon {
+            font-size: 2.5rem;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 0.625rem 1.25rem;
+            border-radius: 6px;
+            font-weight: 500;
+            font-size: 0.875rem;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+        
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: var(--primary-light);
+        }
+        
+        .btn-primary:disabled {
+            background: var(--text-light);
+            cursor: not-allowed;
+        }
+        
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #2f855a;
+        }
+        
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+        
+        .btn-outline:hover {
+            background: var(--bg);
+        }
+        
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+        
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: var(--text);
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(49, 130, 206, 0.1);
+        }
+        
+        .alert {
+            padding: 1rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+        }
+        
+        .alert-info {
+            background: #ebf8ff;
+            border: 1px solid #90cdf4;
+            color: #2b6cb0;
+        }
+        
+        .alert-warning {
+            background: #fffff0;
+            border: 1px solid #f6e05e;
+            color: #975a16;
+        }
+        
+        .alert-danger {
+            background: #fff5f5;
+            border: 1px solid #fc8181;
+            color: #c53030;
+        }
+        
+        .alert-success {
+            background: #f0fff4;
+            border: 1px solid #9ae6b4;
+            color: #276749;
+        }
+        
+        /* Items Table */
+        .items-table-container {
+            overflow-x: auto;
+        }
+        
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+        
+        .items-table th {
+            background: var(--bg);
+            padding: 0.75rem;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid var(--border);
+        }
+        
+        .items-table td {
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+        
+        .items-table tr:hover {
+            background: #f7fafc;
+        }
+        
+        .items-table input {
+            width: 100%;
+            padding: 0.375rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 0.8125rem;
+        }
+        
+        .items-table input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        
+        .items-table .col-line { width: 60px; }
+        .items-table .col-desc { min-width: 250px; }
+        .items-table .col-nsn { width: 120px; }
+        .items-table .col-qty { width: 80px; }
+        .items-table .col-ui { width: 80px; }
+        .items-table .col-actions { width: 60px; text-align: center; }
+        
+        .btn-icon {
+            padding: 0.375rem;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            color: var(--text-light);
+            border-radius: 4px;
+        }
+        
+        .btn-icon:hover {
+            background: var(--bg);
+            color: var(--danger);
+        }
+        
+        /* Steps Progress */
+        .steps {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+        
+        .step {
+            display: flex;
+            align-items: center;
+            color: var(--text-light);
+        }
+        
+        .step-number {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            margin-right: 0.5rem;
+        }
+        
+        .step.active .step-number {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .step.complete .step-number {
+            background: var(--success);
+            color: white;
+        }
+        
+        .step-divider {
+            width: 60px;
+            height: 2px;
+            background: var(--border);
+            margin: 0 1rem;
+        }
+        
+        .step.complete + .step-divider {
+            background: var(--success);
+        }
+        
+        /* Metadata Display */
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+        
+        .metadata-item {
+            padding: 0.75rem;
+            background: var(--bg);
+            border-radius: 6px;
+        }
+        
+        .metadata-label {
+            font-size: 0.75rem;
+            color: var(--text-light);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .metadata-value {
+            font-weight: 500;
+            margin-top: 0.25rem;
+        }
+        
+        /* Loading State */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        
+        .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .steps {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .step-divider {
+                width: 2px;
+                height: 30px;
+                margin: 0.5rem 0 0.5rem 15px;
+            }
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        /* Summary Stats */
+        .stats {
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 1rem;
+        }
+        
+        .stat {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-light);
+            text-transform: uppercase;
+        }
+        
+        /* Quick Generate Form */
+        .quick-form {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+        
+        .quick-form .form-group {
+            flex: 1;
+            min-width: 200px;
+            margin-bottom: 0;
+        }
+        
+        /* Header Fields Grid */
+        .header-fields-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+        }
+        
+        .header-fields-grid .form-group {
+            margin-bottom: 0;
+        }
+        
+        @media (max-width: 600px) {
+            .header-fields-grid {
+                grid-template-columns: 1fr;
+            }
+            .header-fields-grid .form-group[style*="grid-column"] {
+                grid-column: span 1 !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>DD1750 Converter</h1>
+        <p>Convert GCSS-Army BOMs to DD Form 1750 Packing Lists</p>
+    </header>
+    
+    <main class="container">
+        
+<!-- Video Tutorial Section -->
+        <div style="max-width: 980px; margin: 0 auto 2.5rem auto;">
+            <h3 style="color: var(--text); margin-bottom: 1rem;">📺 How to Use This Tool</h3>
+            <div style="position: relative; padding-bottom: 64.8%; height: 0; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                <iframe src="https://www.loom.com/embed/eb0db48fcfb44efc82c2bfe4a7692c04" frameborder="0" webkitallowfullscreen mozallowfullscreen allowfullscreen style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></iframe>
+            </div>
+        </div>
+        
+        
+<!-- Steps Progress -->
+        <div class="steps">
+            <div class="step active" id="step1-indicator">
+                <span class="step-number">1</span>
+                <span>Upload BOM</span>
+            </div>
+            <div class="step-divider"></div>
+            <div class="step" id="step2-indicator">
+                <span class="step-number">2</span>
+                <span>Review & Edit</span>
+            </div>
+            <div class="step-divider"></div>
+            <div class="step" id="step3-indicator">
+                <span class="step-number">3</span>
+                <span>Generate</span>
+            </div>
+        </div>
+        
+        <!-- Step 1: Upload -->
+        <section id="step1" class="card">
+            <h2 class="card-title">Upload BOM PDF</h2>
+            
+            <div class="alert alert-info">
+                <strong>Supported formats:</strong> GCSS-Army Component Listing / Hand Receipt PDFs.
+                <br>
+                <small>
+                    • Uses <strong>OH Qty</strong> (On-Hand Quantity) column - items with 0 are excluded<br>
+                    • Handwritten BOMs are not supported - obtain clean digital BOMs from GCSS-Army
+                </small>
+            </div>
+            
+            <div class="upload-zone" id="dropZone">
+                <div class="upload-icon">📄</div>
+                <p><strong>Drop your BOM PDF here</strong></p>
+                <p style="color: var(--text-light); font-size: 0.875rem;">or click to browse</p>
+                <input type="file" id="bomFile" accept=".pdf">
+            </div>
+            
+            <div id="fileInfo" class="hidden" style="margin-top: 1rem;">
+                <p><strong>Selected:</strong> <span id="fileName"></span></p>
+            </div>
+            
+            <div class="form-group" style="margin-top: 1rem;">
+                <label class="form-label">Start Page (0-based, optional)</label>
+                <input type="number" id="startPage" class="form-input" value="0" min="0" style="max-width: 100px;">
+            </div>
+            
+            <div style="margin-top: 1rem;">
+                <button class="btn btn-primary" id="extractBtn" disabled>
+                    Extract Items
+                </button>
+            </div>
+            
+            <div id="loadingExtract" class="loading hidden">
+                <div class="spinner"></div>
+                <span style="margin-left: 1rem;">Extracting items...</span>
+            </div>
+        </section>
+        
+        <!-- Step 2: Review -->
+        <section id="step2" class="card hidden">
+            <h2 class="card-title">Review Extracted Items</h2>
+            
+            <!-- Metadata Display -->
+            <div id="metadata" class="metadata-grid" style="margin-bottom: 1.5rem;"></div>
+            
+            <!-- Stats -->
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-value" id="itemCount">0</div>
+                    <div class="stat-label">Items Found</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="pagesProcessed">0</div>
+                    <div class="stat-label">Pages Processed</div>
+                </div>
+            </div>
+            
+            <!-- Warnings -->
+            <div id="warnings"></div>
+            
+            <!-- DD1750 Info -->
+            <div class="alert alert-info" style="margin-bottom: 1.5rem;">
+                <strong>Page numbers are calculated automatically.</strong><br>
+                <small>All other fields (Packed By, Boxes, Req No, Order No, End Item, Date, Signature) can be filled in using Acrobat after download.</small>
+            </div>
+            
+            <!-- Items Table -->
+            <h3 class="card-title" style="font-size: 1rem;">Items</h3>
+            <div class="items-table-container">
+                <table class="items-table">
+                    <thead>
+                        <tr>
+                            <th class="col-line">#</th>
+                            <th class="col-desc">Description</th>
+                            <th class="col-nsn">NSN/NIIN</th>
+                            <th class="col-qty">Qty</th>
+                            <th class="col-ui">U/I</th>
+                            <th class="col-actions"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="itemsBody"></tbody>
+                </table>
+            </div>
+            
+            <div style="margin-top: 1rem; display: flex; gap: 1rem; flex-wrap: wrap;">
+                <button class="btn btn-outline" id="addItemBtn">+ Add Item</button>
+                <button class="btn btn-outline" id="backBtn">← Back</button>
+                <div style="margin-left: auto; display: flex; gap: 1rem;">
+                    <button class="btn btn-success" id="generateBtn">
+                        Generate DD1750 →
+                    </button>
+                </div>
+            </div>
+            
+            <div id="loadingGenerate" class="loading hidden">
+                <div class="spinner"></div>
+                <span style="margin-left: 1rem;">Generating PDF...</span>
+            </div>
+            
+            <!-- Success message with restart option -->
+            <div id="successMessage" class="alert alert-success hidden" style="margin-top: 1rem;">
+                <strong>✅ DD1750 generated successfully!</strong>
+                <p style="margin-top: 0.5rem;">Your packing list has been downloaded. Ready to create another?</p>
+                <button class="btn btn-primary" id="restartBtn" style="margin-top: 0.5rem;">
+                    Create Another DD1750
+                </button>
+            </div>
+        </section>
+
+        <!-- Donation Section -->
+        <div style="border-top: 1px solid var(--border); padding-top: 2.25rem; margin-top: 2.25rem;">
+            <h3 style="color: var(--text); margin-bottom: 0.5rem;">☕ Buy Me a Coffee</h3>
+            <p style="color: var(--text-light); margin-bottom: 1.5rem; max-width: 560px; margin-left: auto; margin-right: auto;">
+                I'm too lazy to fill out DD1750s by hand, so I built this instead.<br>
+                If it saved you time, consider fueling the laziness.<br>
+                <small style="opacity:0.85;">Covers hosting &amp; usage costs.</small>
+            </p>
+
+            <div style="display: flex; justify-content: center; align-items: flex-start; gap: 3rem; row-gap: 2.5rem; flex-wrap: wrap; padding: 0.5rem 0;">
+                <div style="text-align: center; padding: 0.25rem 0.75rem; min-width: 260px;">
+                    <a href="https://cash.app/$JaidenRabatin" target="_blank" rel="noopener noreferrer"
+                       style="display:inline-block; text-decoration:none; color:inherit; cursor:pointer;">
+                        <img src="/static/cashapp-qr.jpg" alt="CashApp QR Code"
+                             style="width: 240px; height: 240px; max-width: 70vw; max-height: 70vw; border-radius: 12px; box-shadow: 0 6px 16px rgba(0,0,0,0.12);" />
+                        <p style="margin-top: 0.5rem; font-size: 0.875rem; font-weight: 600; color: var(--text);">CashApp</p>
+                        <small style="display:block; opacity:0.75; margin-top:0.25rem;">Tap to open</small>
+                    </a>
+                </div>
+
+                <div style="text-align: center; padding: 0.25rem 0.75rem; min-width: 260px;">
+                    <a href="https://venmo.com/u/Jaiden-Rabatin" target="_blank" rel="noopener noreferrer"
+                       style="display:inline-block; text-decoration:none; color:inherit; cursor:pointer;">
+                        <img src="/static/venmo-qr.jpg" alt="Venmo QR Code"
+                             style="width: 240px; height: 240px; max-width: 70vw; max-height: 70vw; border-radius: 12px; box-shadow: 0 6px 16px rgba(0,0,0,0.12);" />
+                        <p style="margin-top: 0.5rem; font-size: 0.875rem; font-weight: 600; color: var(--text);">Venmo</p>
+                        <small style="display:block; opacity:0.75; margin-top:0.25rem;">Tap to open</small>
+                    </a>
+                </div>
+            </div>
+        </div>
+
+    </main>
+<footer style="text-align: center; padding: 2rem; color: var(--text-light); font-size: 0.875rem;">
+        
+        <p style="margin-top: 2rem;">DD1750 Converter - Uses Auth Qty from GCSS-Army BOMs</p>
+    </footer>
+    
+    <script>
+        // State
+        let sessionId = null;
+        let items = [];
+        
+        // DOM Elements
+        const dropZone = document.getElementById('dropZone');
+        const bomFile = document.getElementById('bomFile');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        const startPage = document.getElementById('startPage');
+        const extractBtn = document.getElementById('extractBtn');
+        const loadingExtract = document.getElementById('loadingExtract');
+        const step1 = document.getElementById('step1');
+        const step2 = document.getElementById('step2');
+        const itemsBody = document.getElementById('itemsBody');
+        const itemCount = document.getElementById('itemCount');
+        const pagesProcessed = document.getElementById('pagesProcessed');
+        const metadata = document.getElementById('metadata');
+        const warnings = document.getElementById('warnings');
+        const generateBtn = document.getElementById('generateBtn');
+        const loadingGenerate = document.getElementById('loadingGenerate');
+        const backBtn = document.getElementById('backBtn');
+        const addItemBtn = document.getElementById('addItemBtn');
+        const successMessage = document.getElementById('successMessage');
+        const restartBtn = document.getElementById('restartBtn');
+        
+        // Step Indicators
+        const step1Indicator = document.getElementById('step1-indicator');
+        const step2Indicator = document.getElementById('step2-indicator');
+        const step3Indicator = document.getElementById('step3-indicator');
+        
+        // File Upload Handling
+        dropZone.addEventListener('click', () => bomFile.click());
+        
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                bomFile.files = e.dataTransfer.files;
+                handleFileSelect();
+            }
+        });
+        
+        bomFile.addEventListener('change', handleFileSelect);
+        
+        function handleFileSelect() {
+            if (bomFile.files.length) {
+                fileName.textContent = bomFile.files[0].name;
+                fileInfo.classList.remove('hidden');
+                extractBtn.disabled = false;
+            }
+        }
+        
+        // Extract Items
+        extractBtn.addEventListener('click', async () => {
+            if (!bomFile.files.length) return;
+            
+            extractBtn.disabled = true;
+            loadingExtract.classList.remove('hidden');
+            
+            const formData = new FormData();
+            formData.append('bom_file', bomFile.files[0]);
+            formData.append('start_page', startPage.value);
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+                
+                sessionId = data.session_id;
+                items = data.items;
+                
+                // Update UI
+                renderItems();
+                renderMetadata(data.metadata);
+                itemCount.textContent = data.item_count;
+                pagesProcessed.textContent = data.pages_processed;
+                
+                // Show warnings
+                warnings.innerHTML = '';
+                if (data.warnings && data.warnings.length) {
+                    data.warnings.forEach(w => {
+                        warnings.innerHTML += `<div class="alert alert-warning">${w}</div>`;
+                    });
+                }
+                
+                // Update steps
+                step1Indicator.classList.remove('active');
+                step1Indicator.classList.add('complete');
+                step2Indicator.classList.add('active');
+                
+                // Show step 2
+                step1.classList.add('hidden');
+                step2.classList.remove('hidden');
+                
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                loadingExtract.classList.add('hidden');
+                extractBtn.disabled = false;
+            }
+        });
+        
+        function renderItems() {
+            itemsBody.innerHTML = '';
+            items.forEach((item, index) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="col-line">${index + 1}</td>
+                    <td class="col-desc">
+                        <input type="text" value="${escapeHtml(item.description)}" 
+                               data-index="${index}" data-field="description">
+                    </td>
+                    <td class="col-nsn">
+                        <input type="text" value="${escapeHtml(item.nsn || '')}" 
+                               data-index="${index}" data-field="nsn" placeholder="9-digit NIIN">
+                    </td>
+                    <td class="col-qty">
+                        <input type="number" value="${item.qty}" min="1"
+                               data-index="${index}" data-field="qty">
+                    </td>
+                    <td class="col-ui">
+                        <input type="text" value="${escapeHtml(item.unit_of_issue || 'EA')}" 
+                               data-index="${index}" data-field="unit_of_issue" maxlength="2">
+                    </td>
+                    <td class="col-actions">
+                        <button class="btn-icon" onclick="deleteItem(${index})" title="Delete">🗑️</button>
+                    </td>
+                `;
+                itemsBody.appendChild(tr);
+            });
+            
+            // Add event listeners for edits
+            itemsBody.querySelectorAll('input').forEach(input => {
+                input.addEventListener('change', (e) => {
+                    const index = parseInt(e.target.dataset.index);
+                    const field = e.target.dataset.field;
+                    let value = e.target.value;
+                    
+                    if (field === 'qty') {
+                        value = parseInt(value) || 1;
+                    }
+                    
+                    items[index][field] = value;
+                });
+            });
+            
+            itemCount.textContent = items.length;
+        }
+        
+        function renderMetadata(meta) {
+            const fields = [
+                { key: 'end_item_niin', label: 'End Item NIIN' },
+                { key: 'end_item_description', label: 'Description' },
+                { key: 'lin', label: 'LIN' },
+                { key: 'serial_equip_no', label: 'Serial/Equip No' },
+                { key: 'uic', label: 'UIC' },
+                { key: 'format_detected', label: 'Format' },
+            ];
+            
+            metadata.innerHTML = fields
+                .filter(f => meta[f.key])
+                .map(f => `
+                    <div class="metadata-item">
+                        <div class="metadata-label">${f.label}</div>
+                        <div class="metadata-value">${escapeHtml(meta[f.key])}</div>
+                    </div>
+                `).join('');
+        }
+        
+        function deleteItem(index) {
+            if (confirm('Delete this item?')) {
+                items.splice(index, 1);
+                renderItems();
+            }
+        }
+        
+        addItemBtn.addEventListener('click', () => {
+            items.push({
+                line_no: items.length + 1,
+                description: '',
+                nsn: '',
+                qty: 1,
+                unit_of_issue: 'EA'
+            });
+            renderItems();
+            // Focus the new row's description input
+            const inputs = itemsBody.querySelectorAll('input[data-field="description"]');
+            inputs[inputs.length - 1].focus();
+        });
+        
+        backBtn.addEventListener('click', () => {
+            step1.classList.remove('hidden');
+            step2.classList.add('hidden');
+            step1Indicator.classList.add('active');
+            step1Indicator.classList.remove('complete');
+            step2Indicator.classList.remove('active');
+        });
+        
+        // Generate DD1750
+        generateBtn.addEventListener('click', async () => {
+            if (!items.length) {
+                alert('No items to generate');
+                return;
+            }
+            
+            generateBtn.disabled = true;
+            loadingGenerate.classList.remove('hidden');
+            
+            // No header fields needed - all filled in Acrobat
+            const header = {};
+            
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        items: items,
+                        header: header
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Generation failed');
+                }
+                
+                // Download the file
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'DD1750.pdf';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+                
+                // Update steps
+                step2Indicator.classList.remove('active');
+                step2Indicator.classList.add('complete');
+                step3Indicator.classList.add('complete');
+                
+                // Show success message with restart option
+                successMessage.classList.remove('hidden');
+                generateBtn.classList.add('hidden');
+                
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                loadingGenerate.classList.add('hidden');
+                generateBtn.disabled = false;
+            }
+        });
+        
+        // Restart functionality
+        restartBtn.addEventListener('click', () => {
+            // Reset everything
+            sessionId = null;
+            items = [];
+            
+            // Clear form fields
+            bomFile.value = '';
+            fileInfo.classList.add('hidden');
+            extractBtn.disabled = true;
+            startPage.value = '0';
+            
+            // Clear items table
+            itemsBody.innerHTML = '';
+            
+            // Reset UI state
+            successMessage.classList.add('hidden');
+            generateBtn.classList.remove('hidden');
+            
+            // Reset steps
+            step1Indicator.classList.add('active');
+            step1Indicator.classList.remove('complete');
+            step2Indicator.classList.remove('active');
+            step2Indicator.classList.remove('complete');
+            step3Indicator.classList.remove('complete');
+            
+            // Show step 1
+            step1.classList.remove('hidden');
+            step2.classList.add('hidden');
+        });
+        
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
