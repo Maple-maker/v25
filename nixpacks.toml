@@ -1,0 +1,14 @@
+# Railway Nixpacks build configuration.
+#
+# This installs the system-level OS packages we need on top of the default
+# Python build:
+#   - tesseract:     OCR engine (used to read rasterized BOM table data)
+#   - poppler_utils: provides `pdftoppm`, used by pdf2image to render PDF
+#                    pages to images before OCR
+#
+# Without these, dd1750_core.py silently falls back to form-field-only
+# extraction, which loses entire pages of items on form-only PDFs that
+# GCSS-Army has started exporting.
+
+[phases.setup]
+nixPkgs = ["python311", "tesseract", "poppler_utils"]
