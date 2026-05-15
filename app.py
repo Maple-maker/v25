@@ -16,10 +16,27 @@ from werkzeug.utils import secure_filename
 from dd1750_core import (
     extract_items_from_pdf,
     generate_dd1750_from_items,
+    generate_batch_dd1750,
+    format_packed_by,
     BomItem,
     BomFormat,
-    HeaderInfo
+    HeaderInfo,
+    BatchBomEntry,
+    OCR_AVAILABLE,
 )
+
+# Loud, visible boot log so anyone watching deployment can tell whether OCR
+# is wired up. Without OCR, form-only PDFs (an increasing share of GCSS-Army
+# exports) silently lose entire pages of items.
+if OCR_AVAILABLE:
+    print("[dd1750] OCR fallback ENABLED (pdf2image + pytesseract available)", flush=True)
+else:
+    print(
+        "[dd1750] WARNING: OCR fallback DISABLED. Form-only BOMs will lose "
+        "rasterized items. Install tesseract-ocr + poppler-utils system "
+        "packages and pdf2image + pytesseract Python packages.",
+        flush=True,
+    )
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -261,6 +278,202 @@ def quick_generate():
         return f"Error: {str(e)}", 500
 
 
+@app.route('/batch-upload', methods=['POST'])
+def batch_upload():
+    """
+    Upload multiple BOM PDFs at once for redeployment packing.
+    
+    Returns extracted metadata + items for each BOM, indexed by an upload ID.
+    The frontend uses this to display a per-BOM review/edit UI before
+    calling /batch-generate.
+    """
+    files = request.files.getlist('bom_files')
+    if not files or all(f.filename == '' for f in files):
+        return jsonify({'error': 'No BOM files provided'}), 400
+    
+    batch_id = str(uuid.uuid4())
+    boms = []
+    saved_paths = []
+    
+    try:
+        for f in files:
+            if f.filename == '' or not allowed_file(f.filename):
+                continue
+            
+            filename = secure_filename(f.filename)
+            bom_id = str(uuid.uuid4())
+            bom_path = os.path.join(
+                app.config['UPLOAD_FOLDER'],
+                f"{batch_id}_{bom_id}_bom.pdf",
+            )
+            f.save(bom_path)
+            saved_paths.append(bom_path)
+            
+            try:
+                result = extract_items_from_pdf(bom_path)
+            except Exception as e:
+                boms.append({
+                    'bom_id': bom_id,
+                    'filename': f.filename,
+                    'error': str(e),
+                    'items': [],
+                    'item_count': 0,
+                })
+                continue
+            
+            # Default nomenclature: filename without extension
+            default_nom = os.path.splitext(f.filename)[0]
+            
+            boms.append({
+                'bom_id': bom_id,
+                'filename': f.filename,
+                'nomenclature': default_nom,
+                'model': result.metadata.end_item_description or '',
+                'serial_number': result.metadata.serial_equip_no or '',
+                'end_item_niin': result.metadata.end_item_niin or '',
+                'lin': result.metadata.lin or '',
+                'uic': result.metadata.uic or '',
+                'format_detected': result.format_detected.value,
+                'item_count': len(result.items),
+                'items': [
+                    {
+                        'line_no': it.line_no,
+                        'description': it.description,
+                        'nsn': it.nsn,
+                        'qty': it.qty,
+                        'unit_of_issue': it.unit_of_issue,
+                    }
+                    for it in result.items
+                ],
+                'warnings': result.warnings,
+                'errors': result.errors,
+            })
+        
+        # Cache the file paths so /batch-generate can clean them up later
+        extraction_cache[batch_id] = {
+            'kind': 'batch',
+            'bom_paths': saved_paths,
+            'created_at': datetime.now().isoformat(),
+        }
+        
+        return jsonify({
+            'success': True,
+            'batch_id': batch_id,
+            'boms': boms,
+            'count': len(boms),
+        })
+    
+    except Exception as e:
+        # Clean up any saved files on error
+        for p in saved_paths:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/batch-generate', methods=['POST'])
+def batch_generate():
+    """
+    Generate a single combined PDF containing one DD1750 per BOM.
+    
+    Expected JSON body:
+        {
+          "batch_id": "...",
+          "packer": {"name": "...", "rank": "...", "unit": "..."},
+          "date": "06 MAY 2026",
+          "boms": [
+            {
+              "nomenclature": "B49",
+              "model": "TRK CGO W/W M985A4GMT",
+              "serial_number": "10T2K1J2XG1026212",
+              "items": [...]
+            },
+            ...
+          ]
+        }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        batch_id = data.get('batch_id')
+        packer = data.get('packer', {}) or {}
+        date_str = data.get('date', '')
+        boms_data = data.get('boms', [])
+        
+        if not boms_data:
+            return jsonify({'error': 'No BOMs provided'}), 400
+        
+        packed_by = format_packed_by(
+            packer.get('name', ''),
+            packer.get('rank', ''),
+            packer.get('unit', ''),
+        )
+        
+        # Build BatchBomEntry list
+        entries = []
+        for bom_data in boms_data:
+            items = [
+                BomItem(
+                    line_no=i + 1,
+                    description=it.get('description', ''),
+                    nsn=it.get('nsn', ''),
+                    qty=int(it.get('qty', 1)),
+                    unit_of_issue=it.get('unit_of_issue', 'EA'),
+                )
+                for i, it in enumerate(bom_data.get('items', []))
+            ]
+            
+            if not items:
+                continue  # Skip BOMs with no items
+            
+            entries.append(BatchBomEntry(
+                items=items,
+                nomenclature=bom_data.get('nomenclature', ''),
+                model=bom_data.get('model', ''),
+                serial_number=bom_data.get('serial_number', ''),
+                end_item_niin=bom_data.get('end_item_niin', ''),
+                source_filename=bom_data.get('filename', ''),
+            ))
+        
+        if not entries:
+            return jsonify({'error': 'No BOMs with items to generate'}), 400
+        
+        template_path = get_template_path()
+        output_path = os.path.join(
+            app.config['UPLOAD_FOLDER'],
+            f"{batch_id or uuid.uuid4()}_redeployment.pdf",
+        )
+        
+        out_path, num_boms, total_items = generate_batch_dd1750(
+            entries, template_path, output_path,
+            packed_by=packed_by,
+            date=date_str,
+        )
+        
+        # Clean up the cached BOM uploads now that we've generated
+        if batch_id and batch_id in extraction_cache:
+            cache_entry = extraction_cache.pop(batch_id)
+            for p in cache_entry.get('bom_paths', []):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+        
+        return send_file(
+            out_path,
+            as_attachment=True,
+            download_name='Redeployment_DD1750_Stack.pdf',
+            mimetype='application/pdf',
+        )
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/formats')
 def get_supported_formats():
     """Return information about supported BOM formats."""
@@ -278,6 +491,30 @@ def get_supported_formats():
             }
         ],
         'note': 'Handwritten BOMs are not supported. Please obtain clean digital BOMs from GCSS-Army.',
+    })
+
+
+@app.route('/api/health')
+def health_check():
+    """
+    Lightweight health/capability endpoint.
+    
+    Useful for verifying that OCR dependencies are correctly installed on
+    the deployed server. Hit `/api/health` after deploy — if `ocr_available`
+    is false, form-only BOMs (newer GCSS exports) will lose rasterized items.
+    """
+    tesseract_version = None
+    if OCR_AVAILABLE:
+        try:
+            import pytesseract
+            tesseract_version = str(pytesseract.get_tesseract_version())
+        except Exception as e:
+            tesseract_version = f"error: {e}"
+    
+    return jsonify({
+        'status': 'ok',
+        'ocr_available': OCR_AVAILABLE,
+        'tesseract_version': tesseract_version,
     })
 
 
