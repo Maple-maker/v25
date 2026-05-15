@@ -1908,4 +1908,5 @@ __all__ = [
     'generate_batch_dd1750',
     'format_packed_by',
     'format_end_item',
+    'OCR_AVAILABLE',
 ]
